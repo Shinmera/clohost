@@ -9,6 +9,7 @@
   :source-control (:git "https://github.com/shinmera/clohost.git")
   :serial T
   :components ((:file "package")
+               (:file "toolkit")
                (:file "client")
                (:file "objects")
                (:file "documentation"))

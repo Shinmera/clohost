@@ -1,14 +1,5 @@
 (in-package #:org.shirakumo.clohost)
 
-(defun to-key (a)
-  (with-output-to-string (out)
-    (with-input-from-string (in (string a))
-      (loop for char = (read-char in NIL)
-            do (case char
-                 ((NIL) (return))
-                 (#\- (write-char (char-upcase (read-char in))))
-                 (T (write-char (char-downcase char))))))))
-
 (define-condition clohost-error (error)
   ((endpoint :initarg :endpoint :reader endpoint)
    (parameters :initarg :parameters :initform () :reader parameters)
@@ -18,7 +9,6 @@
 
 (defclass client ()
   ((token :initarg :token :initform NIL :accessor token)
-   (user-id :initarg :user-id :initform NIL :accessor user-id)
    (cookie-jar :initform (make-instance 'drakma:cookie-jar) :accessor cookie-jar)))
 
 (defmethod shared-initialize :after ((client client) slots &key (token NIL token-p))
@@ -62,10 +52,11 @@
 (defmethod login ((client client) email password)
   (let* ((salt (fixup-salt (request client :get "/login/salt")))
          (hash (cryptos:pbkdf2-hash password salt :iterations 200000 :digest :sha128 :to :base64))
-         (result (request client :post "/login" :email email :client-hash hash)))
-    (setf (user-id client) (gethash "userId" result))
-    client))
+         (result (request client :post "/login" :email email :client-hash hash))
+         (cookie (find "connect.sid" (drakma:cookie-jar-cookies (cookie-jar client)) :key #'drakma:cookie-name :test #'string=)))
+    (setf (slot-value client 'token) (drakma:cookie-value cookie))
+    (change-class client 'account :id (gethash "userId" result))))
 
 (defmethod logout ((client client))
   (request client :post "/logout")
-  (reinitialize-instance client :token NIL))
+  (change-class client 'client :token NIL))

@@ -4,16 +4,16 @@
   ((endpoint :initarg :endpoint :reader endpoint)
    (parameters :initarg :parameters :initform () :reader parameters)
    (response :initarg :response :initform () :reader response))
-  (:report (lambda (c s) (format s "The request to~%  ~a~@[ ~a~]~%failed~@[ with result:~%  ~a~]"
-                                 (endpoint c) (parameters c) (response c)))))
+  (:report (lambda (c s) (format s "The request to~%  ~a~@[ ~s~]~%failed~@[ with result:~%~a~]"
+                                 (endpoint c) (parameters c) (com.inuoe.jzon:stringify (response c) :pretty T)))))
 
 (defclass client ()
-  ((token :initarg :token :initform NIL :accessor token)
-   (cookie-jar :initform (make-instance 'drakma:cookie-jar) :accessor cookie-jar)))
+  ((cookie-jar :initform (make-instance 'drakma:cookie-jar) :accessor cookie-jar)))
 
 (defmethod shared-initialize :after ((client client) slots &key (token NIL token-p))
-  (setf (drakma:cookie-jar-cookies (cookie-jar client))
-        (if token-p (list (make-instance 'drakma:cookie :domain "cohost.org" :name "connect.sid" :value token)) ())))
+  (when token-p
+    (setf (drakma:cookie-jar-cookies (cookie-jar client))
+          (if token-p (list (make-instance 'drakma:cookie :domain "cohost.org" :name "connect.sid" :value token)) ()))))
 
 (defmethod request ((client client) method endpoint &rest args)
   (multiple-value-bind (stream status headers)
@@ -47,16 +47,24 @@
       (values payload headers))))
 
 (defun fixup-salt (salt)
-  (cryptos:from-base64 (format NIL "~a==" (nsubstitute #\_ #\A (nsubstitute #\A #\- salt)))))
+  (cryptos:from-base64 (format NIL "~a==" (nsubstitute #\_ #\A (nsubstitute #\A #\- salt))) :octets))
+
+(defun compute-hash (password salt)
+  (let* ((password (cryptos:to-octets password))
+         (hash (ironclad::pbkdf2-derive-key :sha384 password salt 200000 128)))
+    (cryptos:to-base64 hash)))
+
+(defmethod login ((new (eql T)) email password)
+  (login (make-instance 'client) email password))
 
 (defmethod login ((client client) email password)
-  (let* ((salt (fixup-salt (request client :get "/login/salt")))
-         (hash (cryptos:pbkdf2-hash password salt :iterations 200000 :digest :sha128 :to :base64))
-         (result (request client :post "/login" :email email :client-hash hash))
-         (cookie (find "connect.sid" (drakma:cookie-jar-cookies (cookie-jar client)) :key #'drakma:cookie-name :test #'string=)))
-    (setf (slot-value client 'token) (drakma:cookie-value cookie))
+  (let* ((salt (fixup-salt (getj (request client :get "/login/salt" :email email) :salt)))
+         (result (request client :post "/login" :email email :client-hash (compute-hash password salt))))
     (change-class client 'account :id (gethash "userId" result))))
 
 (defmethod logout ((client client))
   (request client :post "/logout")
   (change-class client 'client :token NIL))
+
+(defmethod token ((client client))
+  (drakma:cookie-value (find "connect.sid" (drakma:cookie-jar-cookies (cookie-jar client)) :key #'drakma:cookie-name :test #'string=)))

@@ -1,8 +1,8 @@
 (in-package #:org.shirakumo.clohost)
 
 (defclass entity ()
-  (id
-   client))
+  ((id :initarg :id :accessor id)
+   (client :initarg :client :accessor client)))
 
 (defgeneric edit (entity &key))
 (defgeneric destroy (entity))

@@ -28,7 +28,7 @@
   (if (null attributes)
       data
       (let ((attribute (first attributes)))
-        (apply #'getj
+        (apply #'%getj
                (etypecase attribute
                  (string (gethash attribute data))
                  (integer (elt data attribute)))

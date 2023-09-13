@@ -16,4 +16,5 @@
   :depends-on (:documentation-utils
                :crypto-shortcuts
                :com.inuoe.jzon
+               :trivial-mimes
                :drakma))

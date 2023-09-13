@@ -50,3 +50,23 @@
                           collect (if (constantp attribute env)
                                       `(load-time-value ,form)
                                       form)))))
+
+(defun tab (&rest args)
+  (let ((table (make-hash-table :test 'equal)))
+    (loop for (k v) on args by #'cddr
+          when v
+          do (setf (gethash (to-key k) table) v))
+    table))
+
+(defun tab* (existing &rest args)
+  (let ((table (make-hash-table :test 'equal)))
+    (loop for k being the hash-keys of existing using (hash-value v)
+          do (setf (gethash k table) v))
+    (loop for (k v) on args by #'cddr
+          when v
+          do (setf (gethash (to-key k) table) v))
+    table))
+
+(defun starts-with (prefix string)
+  (and (<= (length prefix) (length string))
+       (string= prefix string :end2 (length prefix))))

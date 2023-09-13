@@ -1,11 +1,15 @@
 (in-package #:org.shirakumo.clohost)
 
+(defgeneric edit (entity &key))
+(defgeneric destroy (entity))
+(defgeneric make-post (page &key))
+(defgeneric ask (page content &key source))
+(defgeneric share (post &key))
+(defgeneric reply (post text &key))
+
 (defclass entity ()
   ((id :initarg :id :accessor id)
    (client :initarg :client :accessor client)))
-
-(defgeneric edit (entity &key))
-(defgeneric destroy (entity))
 
 (defgeneric decode-entity (type data &rest initargs))
 
@@ -33,6 +37,7 @@
                  when field
                  collect `(let ((,value ,(cond ((null field) data)
                                                ((eq field #1#) `(getj ,data ,(to-key slot)))
+                                               ((listp field) `(getj ,data ,@field))
                                                (T `(getj ,data ,field)))))
                             (setf (slot-value ,name ',slot)
                                   (when ,value
@@ -50,7 +55,6 @@
 (define-entity account (client)
   (%cache :field NIL)
   (pages :field NIL)
-  (notifications :field NIL)
   (default-page :field "projectId")
   mod-mode
   (activated-p :field "activated")
@@ -75,15 +79,16 @@
           (loop for project in (getj (request account :get "/trpc/projects.listEditedProjects") :result :data :projects)
                 collect (decode-entity 'page project :client account)))))
 
-(defmethod notifications :before ((account account))
-  (unless (slot-boundp account 'notifications)
-    (setf (notifications account)
-          (loop for offset from 0 by 100
-                for data = (request account :get "/notifications/list" :offset offset :limit 100)
-                do (decode-entity 'comment (getj data :comments) :client account)
-                   (decode-entity 'post (getj data :posts) :client account)
-                   (decode-entity 'page (getj data :projects) :client account)
-                nconc (decode-entity 'notification (ungroup-notifications (getj data :projects)) :client account)))))
+(defmethod notifications ((account account) &key (start 0) (end 10) (per-page 100))
+  (loop with offset = start
+        while (< offset end)
+        for limit = (min per-page (- end offset))
+        for data = (request account :get "/notifications/list" :offset offset :limit limit)
+        do (decode-entity 'comment (getj data :comments) :client account)
+           (decode-entity 'post (getj data :posts) :client account)
+           (decode-entity 'page (getj data :projects) :client account)
+           (incf offset limit)
+        nconc (decode-entity 'notification (ungroup-notifications (getj data :notifications)) :client account)))
 
 (defmethod default-page :before ((account account))
   (unless (typep (slot-value account 'default-page) 'page)
@@ -101,58 +106,114 @@
   (declare (ignore args))
   (cache (client entity) entity))
 
+(define-entity attachment ()
+  (id :nullable T :field "attachmentId")
+  file
+  filename
+  content-type
+  content-length
+  alt-text)
+
+(defmethod initialize-instance :after ((attachment attachment) &key file)
+  (unless (slot-boundp attachment 'filename)
+    (setf (filename attachment) (file-namestring file)))
+  (unless (slot-boundp attachment 'content-type)
+    (setf (content-type attachment) (trivial-mimes:mime-type file)))
+  (unless (slot-boundp attachment 'content-length)
+    (setf (content-length attachment)
+          (with-open-file (stream file :element-type '(unsigned-byte 8))
+            (file-length file)))))
+
 (define-entity page (cached-entity)
-  (id :key "projectId")
+  (id :field "projectId")
   handle
-  (posts :initform () :field NIL)
-  (notifications :initform () :field NIL)
   display-name
-  (title :key "dek")
+  (title :field "dek")
   description
-  (avatar :key "avatarURL")
-  (header :key "headerURL")
+  (avatar :field "avatarURL")
+  (header :field "headerURL")
   privacy
   url
   pronouns
   flags)
 
-(defgeneric make-post (page &key))
-(defgeneric ask (page content &key source))
+(defmethod posts ((page page) &key (start 0) (end 25))
+  (loop for page from (floor start per-page) below (ceiling end per-page) by per-page
+        for data = (request (client page) :get (format NIL "/project/~a/posts" (handle page)) :page page)
+        nconc (decode-entity 'post (getj data :items) :client (client page))))
+
+(defun encode-blocks (blocks)
+  (loop for block in blocks
+        collect (etypecase block
+                  (string (tab :type "markdown"
+                               :markdown (tab :content block)))
+                  (attachment (tab :type "attachment"
+                                   :attachment (tab :attachment-id (or (id block) "00000000-0000-0000-0000-000000000000")
+                                                    :alt-text (alt-text block)))))))
+
+(defun decode-blocks (blocks)
+  (loop for block in blocks
+        collect (cond ((string= "markdown" (getj block :type))
+                       (getj block :markdown :content))
+                      ((string= "attachment" (getj block :type))
+                       (decode-entity 'attachment (getj block :attachment)))
+                      (T
+                       block))))
+
+(defmethod make-post ((page page) &key title content content-warnings tags adult-p draft-p share)
+  (let* ((blocks (loop for block in (if (listp content) (list content) content)
+                       collect (etypecase thing
+                                 (string thing)
+                                 (attachment thing)
+                                 (pathname (make-instance 'attachment :file thing)))))
+         (data (request (client page) :postjson (format NIL "/project/~a/posts" (handle page))
+                                      :post-state 0
+                                      :headline title
+                                      :adult-content adult-p
+                                      :blocks (encode-blocks blocks)
+                                      :cws content-warnings
+                                      :tags tags))
+         (post (decode-entity 'post data :client (client page))))
+    (loop for thing in blocks
+          when (typep content 'attachment)
+          do (upload thing post))
+    (let ((data (request (client page) :put (format NIL "/project/~a/posts/~a" (handle page) (id post))
+                                       :post-state 1
+                                       :headline title
+                                       :adult-content adult-p
+                                       :blocks (encode-blocks blocks)
+                                       :cws content-warnings
+                                       :tags tags)))
+      (decode-entity post data))))
+
+(defmethod ask ((page page) content &key (source (default-page (client page))))
+  (request (client page) :postjson "/trpc/asks.send"
+           :to-project-handle (handle page)
+           :content content
+           :anon (not (null source))))
 
 (defmethod edit ((page page) &key display-name title description avatar header privacy bio pronouns flags info)
   )
 
-(defmethod make-post ((page page) &key title content-warnings adult-p tags content files share)
-  )
-
-(defmethod ask ((page page) content &key (source (client page)))
-  )
-
-(defmethod posts :before ((page page))
-  (unless (slot-boundp account 'posts)
-    ))
-
 (define-entity post (cached-entity)
-  title
-  (time :key "createdAt" :transform-by #'unix->universal)
+  (id :field "postId")
+  (title :field "headline")
+  (time :field "publishedAt" :transform-by #'unix->universal)
   state
-  content-warnings
-  adult-p
-  liked-p
-  shareable-p
-  publishable-p
-  related-pages
+  (content-warnings :field "cws")
+  (adult-p :field "effectiveAdultContent")
+  (liked-p :field "isLiked")
+  (shareable-p :field "canShare")
+  (publishable-p :field "canPublish")
+  (related-pages :field "relatedProjects" :from-cache 'page)
   tags
-  page
-  author
+  (page :field "postingProject")
+  (op :field ("shareTree" 0 "postingProject"))
   share-tree
-  url
-  comments
-  content
-  text)
-
-(defgeneric share (post &key))
-(defgeneric reply (post text &key))
+  (url :field "singlePostPageUrl")
+  (content :field "blocks" :transform-by #'decode-blocks)
+  (text :field "plainTextBody")
+  comments)
 
 (defmethod share ((post post) &key tags content (page (default-page (client post))))
   (apply #'make-post page args :tags tags :content content :share post))
@@ -169,6 +230,20 @@
 (defmethod comments :before ((post post))
   (unless (slot-boundp account 'comments)
     ))
+
+(defmethod upload ((attachment attachment) (post post))
+  (if (id attachment)
+      attachment
+      (let ((creds (request (client post) :postjson (format NIL "/project/~a/posts/~a/attach/start" (handle (page post)) (id post))
+                                          :filename (filename attachment)
+                                          :content_type (content-type attachment)
+                                          :content_length (content-length attachment))))
+        (drakma:http-request (getj creds :url) :method :post :form-data T :parameters
+                             (list* (list "file" (file attachment) :filename (filename attachment) :content-type (content-type attachment))
+                                    (alexandria:hash-table-alist (getj creds :required-fields))))
+        (request (client post) :post (format NIL "/project/~a/posts/~a/attach/finish/~a" (handle (page post)) (id post) (getj creds :attachment-id)))
+        (setf (id attachment) (getj creds :attachment-id))
+        attachment)))
 
 (define-entity comment (cached-entity)
   post
@@ -188,8 +263,24 @@
   (reply (post comment) text :reply-to comment))
 
 (define-entity notification ()
-  (time :key "createdAt" :transform-by #'unix->universal)
-  (page :key "fromProjectId" :from-cache 'page)
-  (post :key "toPostId" :from-cache 'post)
-  (share :key "sharePostId" :from-cache 'post)
-  (comment :key "commentId" :from-cache 'comment))
+  (time :field "createdAt" :transform-by #'unix->universal)
+  (author :field "fromProjectId" :from-cache 'page)
+  (post :field "toPostId" :from-cache 'post)
+  (share :field "sharePostId" :from-cache 'post)
+  (comment :field "commentId" :from-cache 'comment))
+
+(defun ungroup-notifications (data)
+  (let ((notifications ()))
+    (dolist (entry data (nreverse notifications))
+      (cond ((starts-with "grouped" (getj entry :type))
+             (loop for from-project-id in (getj entry :from-project-ids)
+                   for relationship-id in (or (getj entry :relationship-ids) (alexandria:make-circular-list 1))
+                   for share-post-id in (or (getj entry :share-post-ids) (alexandria:make-circular-list 1))
+                   do (push (tab* entry
+                                  :type (subseq (getj entry :type) (length "grouped"))
+                                  :from-project-id from-project-id
+                                  :relationship-id relationship-id
+                                  :share-post-id share-post-id)
+                            notifications)))
+            (T
+             (push entry notifications))))))

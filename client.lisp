@@ -24,7 +24,12 @@
                            :parameters (case method
                                          ((:get :post)
                                           (loop for (k v) on args by #'cddr
-                                                collect (cons (to-key k) v))))
+                                                collect (cons (to-key k)
+                                                              (etypecase v
+                                                                (string v)
+                                                                ((eql T) "true")
+                                                                ((eql NIL) "false")
+                                                                (integer (princ-to-string v)))))))
                            :content (case method
                                       ((:postjson :put)
                                        (com.inuoe.jzon:stringify
@@ -42,6 +47,7 @@
                            :external-format-out :utf-8
                            :want-stream T)
     (let ((payload (com.inuoe.jzon:parse stream)))
+      (format *error-output* "~a" (com.inuoe.jzon:stringify payload :pretty T))
       (when (<= 400 status)
         (error 'clohost-error :endpoint endpoint :parameters args :response payload))
       (values payload headers))))

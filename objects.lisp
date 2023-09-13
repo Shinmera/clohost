@@ -327,10 +327,10 @@
 
 (define-entity comment (cached-entity)
   post
-  reply-to
-  replies
-  author
-  time
+  (reply-to :from-cache 'comment)
+  (replies :from-cache 'comment)
+  (author :from-cache 'post)
+  (time :translate-with #'to-universal)
   text)
 
 (defmethod print-object ((entity comment) stream)
@@ -352,7 +352,7 @@
 
 (define-entity notification ()
   (kind :field "type" :translate-with #'to-keyword)
-  (time :field "createdAt" :translate-with #'to->universal)
+  (time :field "createdAt" :translate-with #'to-universal)
   (author :field "fromProjectId" :from-cache 'page)
   (post :field "toPostId" :from-cache 'post)
   (share-post :field "sharePostId" :from-cache 'post)

@@ -7,10 +7,47 @@
 (defun unix->universal (unix)
   (+ unix *unix-epoch-difference*))
 
+(defun to-universal (thing)
+  (etypecase thing
+    (integer (unix->universal thing))
+    (string (parse-timestring thing))))
+
+(defun parse-timestring (string)
+  (let* ((y -1)
+         (x (position #\- string))
+         (d (position #\- string :start (1+ x)))
+         (h (position #\T string :start (1+ d)))
+         (m (position #\: string :start (1+ h)))
+         (s (position #\: string :start (1+ m)))
+         (ms (position #\. string :start (1+ s))))
+    (flet ((part (s e)
+             (parse-integer string :start s :end e)))
+      (encode-universal-time
+       (part (1+ s) ms)
+       (part (1+ m) s)
+       (part (1+ h) m)
+       (part (1+ d) h)
+       (part (1+ x) d)
+       (part (1+ y) x)
+       0))))
+
+(defun universal->utc-timestring (universal)
+  (multiple-value-bind (seconds minutes hours day month year)
+      (decode-universal-time universal 0)
+    (format NIL
+            "~d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
+            year month day hours minutes seconds)))
+
 (defun to-keyword (thing)
   (intern (with-output-to-string (out)
-            (loop for char across thing
-                  do (if (char= #\_ char)
+            (loop with was-dash = T
+                  for char across thing
+                  do (if (upper-case-p char)
+                         (unless was-dash
+                           (write-char #\- out)
+                           (setf was-dash T))
+                         (setf was-dash NIL))
+                     (if (char= #\_ char)
                          (write-char #\- out)
                          (write-char (char-upcase char) out))))
           "KEYWORD"))
@@ -25,14 +62,15 @@
                  (T (write-char (char-downcase char) out)))))))
 
 (defun %getj (data &rest attributes)
-  (if (null attributes)
-      data
-      (let ((attribute (first attributes)))
-        (apply #'%getj
-               (etypecase attribute
-                 (string (gethash attribute data))
-                 (integer (elt data attribute)))
-               (rest attributes)))))
+  (cond ((null data) NIL)
+        ((null attributes) data)
+        (T (let ((attribute (first attributes)))
+             (apply #'%getj
+                    (etypecase attribute
+                      (string (gethash attribute data))
+                      (integer (when (< attribute (length data))
+                                 (elt data attribute))))
+                    (rest attributes))))))
 
 (defun getj (data &rest attributes)
   (apply #'%getj data (loop for attribute in attributes
@@ -67,6 +105,21 @@
           do (setf (gethash (to-key k) table) v))
     table))
 
+(defun from-tab (tab)
+  (etypecase tab
+    (hash-table
+     (loop for k being the hash-keys of tab using (hash-value v)
+           collect (to-keyword k) collect v))
+    (list
+     (map 'list #'from-tab tab))
+    (vector
+     (map 'list #'from-tab tab))))
+
 (defun starts-with (prefix string)
   (and (<= (length prefix) (length string))
        (string= prefix string :end2 (length prefix))))
+
+(defun to-list (thing)
+  (etypecase thing
+    (list thing)
+    (sequence (map 'list #'identity thing))))

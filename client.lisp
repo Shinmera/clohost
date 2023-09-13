@@ -1,5 +1,7 @@
 (in-package #:org.shirakumo.clohost)
 
+(defvar *debug* NIL)
+
 (define-condition clohost-error (error)
   ((endpoint :initarg :endpoint :reader endpoint)
    (parameters :initarg :parameters :initform () :reader parameters)
@@ -16,6 +18,8 @@
           (if token-p (list (make-instance 'drakma:cookie :domain "cohost.org" :name "connect.sid" :value token)) ()))))
 
 (defmethod request ((client client) method endpoint &rest args)
+  (when *debug*
+    (format *error-output* "~&>> ~a ~a~%" method endpoint))
   (multiple-value-bind (stream status headers)
       (drakma:http-request (format NIL "https://cohost.org/api/v1~a" endpoint)
                            :method (ecase method
@@ -47,7 +51,8 @@
                            :external-format-out :utf-8
                            :want-stream T)
     (let ((payload (com.inuoe.jzon:parse stream)))
-      (format *error-output* "~a" (com.inuoe.jzon:stringify payload :pretty T))
+      (when *debug*
+        (format *error-output* "~&<< ~a~%" (com.inuoe.jzon:stringify payload :pretty T)))
       (when (<= 400 status)
         (error 'clohost-error :endpoint endpoint :parameters args :response payload))
       (values payload headers))))

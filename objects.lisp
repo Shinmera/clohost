@@ -201,6 +201,10 @@
         for data = (request (client page) :get (format NIL "/project/~a/posts" (handle page)) :page index)
         nconc (decode-entity 'post (getj data :items) :client (client page))))
 
+(defmethod notifications ((page page) &key (start 0) (end 10) (per-page 100))
+  ;; TODO: implement
+  (error "Not implemented"))
+
 (defun encode-blocks (blocks)
   (loop for block in blocks
         collect (etypecase block
@@ -252,7 +256,8 @@
            :anon (not (null source))))
 
 (defmethod edit ((page page) &key display-name title description avatar header privacy bio pronouns flags info)
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (define-entity post (cached-entity)
   (id :field "postId")
@@ -290,17 +295,21 @@
   (make-post page :tags tags :content content :share post))
 
 (defmethod reply ((post post) text &key reply-to)
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (defmethod edit ((post post) &key title content-warnings adult-p tags content)
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (defmethod destroy ((post post))
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (defmethod comments :before ((post post))
   (unless (slot-boundp post 'comments)
-    ))
+    ;; TODO: implement
+    (error "Not implemented")))
 
 (defmethod upload ((attachment attachment) (post post))
   (if (id attachment)
@@ -331,10 +340,12 @@
       (call-next-method)))
 
 (defmethod edit ((comment comment) &key text)
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (defmethod destroy ((comment comment))
-  )
+  ;; TODO: implement
+  (error "Not implemented"))
 
 (defmethod reply ((comment comment) text &key)
   (reply (post comment) text :reply-to comment))

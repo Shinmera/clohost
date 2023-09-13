@@ -50,12 +50,14 @@
                            :external-format-in :utf-8
                            :external-format-out :utf-8
                            :want-stream T)
-    (let ((payload (com.inuoe.jzon:parse stream)))
-      (when *debug*
-        (format *error-output* "~&<< ~a~%" (com.inuoe.jzon:stringify payload :pretty T)))
-      (when (<= 400 status)
-        (error 'clohost-error :endpoint endpoint :parameters args :response payload))
-      (values payload headers))))
+    (unwind-protect
+         (let ((payload (com.inuoe.jzon:parse stream)))
+           (when *debug*
+             (format *error-output* "~&<< ~a~%" (com.inuoe.jzon:stringify payload :pretty T)))
+           (when (<= 400 status)
+             (error 'clohost-error :endpoint endpoint :parameters args :response payload))
+           (values payload headers))
+      (close stream))))
 
 (defun fixup-salt (salt)
   (cryptos:from-base64 (format NIL "~a==" (nsubstitute #\_ #\A (nsubstitute #\A #\- salt))) :octets))

@@ -134,3 +134,12 @@
   (etypecase thing
     (list thing)
     (sequence (map 'list #'identity thing))))
+
+(defun jsonify (params &rest args)
+  (apply #'com.inuoe.jzon:stringify
+         (loop with table = (make-hash-table :test 'equal)
+               for (k v) on params by #'cddr
+               unless (eql v :||)
+               do (setf (gethash (to-key k) table) v)
+               finally (return table))
+         args))

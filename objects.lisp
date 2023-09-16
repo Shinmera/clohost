@@ -45,12 +45,14 @@
        (defclass ,name (,@direct-superclasses entity)
          ,(loop for (slot . options) in slots
                 collect `(,slot :initarg ,(intern (string slot) "KEYWORD")
-                                :accessor ,slot)))
+                                :accessor ,slot
+                                ,@(unless (eq #1='#:no-value (getf options :initform #1#))
+                                    (list :initform (getf options :initform))))))
 
        (defmethod decode-entity ((,name ,name) ,data &rest initargs)
          (when initargs (apply #'reinitialize-instance ,name initargs))
          ,@(loop for (slot . options) in slots
-                 for field = (getf options :field #1='#.(make-symbol "no value"))
+                 for field = (getf options :field #1#)
                  when field
                  collect `(let ((,value ,(cond ((null field) data)
                                                ((eq field #1#) `(getj ,data ,(to-key slot)))
@@ -164,7 +166,7 @@
            (cache (client entity) entity)))))
 
 (define-entity attachment ()
-  (id :field "attachmentId")
+  (id :initform NIL :field "attachmentId")
   (kind :translate-with #'to-keyword)
   (url :field "fileURL")
   (preview :field "previewURL")
@@ -174,7 +176,7 @@
   filename
   content-type
   content-length
-  alt-text)
+  (alt-text :initform NIL))
 
 (defmethod initialize-instance :after ((attachment attachment) &key file)
   (unless (slot-boundp attachment 'filename)
@@ -184,7 +186,7 @@
   (unless (slot-boundp attachment 'content-length)
     (setf (content-length attachment)
           (with-open-file (stream file :element-type '(unsigned-byte 8))
-            (file-length file)))))
+            (file-length stream)))))
 
 (defmethod print-object ((entity attachment) stream)
   (print-unreadable-object (entity stream :type T)
@@ -264,10 +266,14 @@
                                       :cws content-warnings
                                       :tags tags
                                       :share-of-post-id share))
-         (post (decode-entity 'post data :client (client page))))
-    (loop for thing in blocks
-          when (typep thing 'attachment)
-          do (upload thing post))
+         (post (decode-entity 'post data :page page :client (client page))))
+    (setf (page post) page)
+    (handler-bind ((error (lambda (e)
+                            (declare (ignore e))
+                            (destroy post))))
+         (loop for thing in blocks
+               when (typep thing 'attachment)
+               do (upload thing post)))
     (let ((data (request (client page) :put (format NIL "/project/~a/posts/~a" (handle page) (id post))
                                        :post-state (if draft-p 0 1)
                                        :headline (or title "")
@@ -276,7 +282,7 @@
                                        :cws content-warnings
                                        :tags tags
                                        :share-of-post-id share)))
-      (find-post (id (decode-entity post data :page page)) page))))
+      (find-post (id (decode-entity post data)) page))))
 
 (defmethod edit ((page page) &key display-name title description url pronouns contact-card)
   ;; FIXME: avatar and header changes. Somehow the chrome network tab shows no upload for it...?
@@ -305,13 +311,16 @@
   ;; FIXME: implement
   (error "Not implemented"))
 
+(defmethod drafts ((page page))
+  ;; FIXME: implement
+  (error "Not implemented"))
+
 (defmethod find-post ((id integer) (page page))
   (let ((response (request (client page) :get "/trpc/posts.singlePost"
-                                         :batch 1
-                                         :input (tab "0" (tab :handle (handle page) :post-id id)))))
+                                         :input (tab :handle (handle page) :post-id id))))
     (let ((data (getj response :result :data :post)))
       (setf (gethash "comments" data) (getj response :result :comments (getj data :post-id)))
-      (decode-entity 'post data))))
+      (decode-entity 'post data :client (client page)))))
 
 (defmethod find-post ((id string) (page page))
   (find-post (parse-integer id) page))
@@ -396,13 +405,22 @@
 (defmethod upload ((attachment attachment) (post post))
   (if (id attachment)
       attachment
-      (let ((creds (request (client post) :postjson (format NIL "/project/~a/posts/~a/attach/start" (handle (page post)) (id post))
-                                          :filename (filename attachment)
-                                          :content_type (content-type attachment)
-                                          :content_length (content-length attachment))))
-        (drakma:http-request (getj creds :url) :method :post :form-data T :parameters
-                             (list* (list "file" (file attachment) :filename (filename attachment) :content-type (content-type attachment))
-                                    (alexandria:hash-table-alist (getj creds :required-fields))))
+      (let* ((creds (request (client post) :postjson (format NIL "/project/~a/posts/~a/attach/start" (handle (page post)) (id post))
+                                           :filename (filename attachment)
+                                           :content_type (content-type attachment)
+                                           :content_length (content-length attachment)))
+             ;; WTF: Apparently the order of the keys matters and the required fields have to come
+             ;;      **before** the actual file.
+             (data (append (alexandria:hash-table-alist (getj creds :required-fields))
+                           (list (cons "file" (file attachment))))))
+        (multiple-value-bind (stream code)
+            (drakma:http-request (getj creds :url) :method :post :form-data T :want-stream T :parameters data :content-length T)
+          (unwind-protect
+               (when (<= 400 code)
+                 (error 'clohost-error :endpoint (getj creds :url)
+                                       :response (alexandria:read-stream-content-into-string stream)
+                                       :parameters (jsonify (alexandria:alist-plist data) :pretty T)))
+            (close stream)))
         (request (client post) :post (format NIL "/project/~a/posts/~a/attach/finish/~a" (handle (page post)) (id post) (getj creds :attachment-id)))
         (setf (id attachment) (getj creds :attachment-id))
         attachment)))

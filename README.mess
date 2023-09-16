@@ -14,3 +14,5 @@ Hello @Shinmera!")
 ::
 
 You can also ``edit`` it, ``reply`` to it, or ``destroy`` the post again. Again, please see the definition cross references for more information on what you can do.
+
+If you'd like to save your session for later use, you can retrieve the ``token`` of the account, and then recreate it later via ``(make-instance 'client :token token)``.

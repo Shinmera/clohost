@@ -6,7 +6,7 @@
   ((endpoint :initarg :endpoint :reader endpoint)
    (parameters :initarg :parameters :initform () :reader parameters)
    (response :initarg :response :initform () :reader response))
-  (:report (lambda (c s) (format s "The request to~%  ~a~@[ ~s~]~%failed~@[ with result:~%~a~]"
+  (:report (lambda (c s) (format s "The request to~%  ~a~@[~%~a~]~%failed~@[ with result:~%~a~]"
                                  (endpoint c) (parameters c) (com.inuoe.jzon:stringify (response c) :pretty T)))))
 
 (defclass client ()
@@ -17,7 +17,7 @@
 
 (defmethod request ((client client) method endpoint &rest args)
   (when *debug*
-    (format *error-output* "~&>> ~a ~a~%" method endpoint))
+    (format *error-output* "~&>> ~a ~a ~a~%" method endpoint (jsonify args :pretty T)))
   (multiple-value-bind (stream status headers)
       (drakma:http-request (format NIL "https://cohost.org/api/v1~a" endpoint)
                            :method (ecase method
@@ -36,12 +36,7 @@
                                                                 (integer (princ-to-string v)))))))
                            :content (case method
                                       ((:postjson :put :delete)
-                                       (com.inuoe.jzon:stringify
-                                        (loop with table = (make-hash-table :test 'equal)
-                                              for (k v) on args by #'cddr
-                                              unless (eql v :||)
-                                              do (setf (gethash (to-key k) table) v)
-                                              finally (return table)))))
+                                       (jsonify args)))
                            :content-type (ecase method
                                            (:get "application/x-www-form-urlencoded")
                                            (:post "multipart/form-data")
@@ -56,7 +51,7 @@
            (when *debug*
              (format *error-output* "~&<< ~a~%" (com.inuoe.jzon:stringify payload :pretty T)))
            (when (<= 400 status)
-             (error 'clohost-error :endpoint endpoint :parameters args :response payload))
+             (error 'clohost-error :endpoint endpoint :parameters (jsonify args :pretty T) :response payload))
            (values payload headers))
       (close stream))))
 

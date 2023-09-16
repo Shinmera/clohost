@@ -23,7 +23,7 @@
   (multiple-value-bind (stream status headers)
       (drakma:http-request (format NIL "https://cohost.org/api/v1~a" endpoint)
                            :method (ecase method
-                                     ((:get :post :put) method)
+                                     ((:get :post :put :delete) method)
                                      (:postjson :post))
                            :parameters (case method
                                          ((:get :post)
@@ -33,9 +33,10 @@
                                                                 (string v)
                                                                 ((eql T) "true")
                                                                 ((eql NIL) "false")
+                                                                (hash-table (com.inuoe.jzon:stringify v))
                                                                 (integer (princ-to-string v)))))))
                            :content (case method
-                                      ((:postjson :put)
+                                      ((:postjson :put :delete)
                                        (com.inuoe.jzon:stringify
                                         (loop with table = (make-hash-table :test 'equal)
                                               for (k v) on args by #'cddr
@@ -44,7 +45,7 @@
                            :content-type (ecase method
                                            (:get "application/x-www-form-urlencoded")
                                            (:post "multipart/form-data")
-                                           ((:postjson :put) "application/json"))
+                                           ((:postjson :put :delete) "application/json"))
                            :cookie-jar (cookie-jar client)
                            :user-agent "Clohost"
                            :external-format-in :utf-8

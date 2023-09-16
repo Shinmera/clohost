@@ -38,6 +38,17 @@
             "~d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
             year month day hours minutes seconds)))
 
+(defun from-bool (bool)
+  (etypecase bool
+    (integer (= 1 bool))
+    (symbol bool)
+    (string
+     (or (string-equal bool "true")
+         (string-equal bool "t")
+         (string-equal bool "yes")
+         (string-equal bool "allowed")
+         (string-equal bool "1")))))
+
 (defun to-keyword (thing)
   (intern (with-output-to-string (out)
             (loop with was-dash = T

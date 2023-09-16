@@ -202,8 +202,13 @@
         nconc (decode-entity 'post (getj data :items) :client (client page))))
 
 (defmethod notifications ((page page) &key (start 0) (end 10) (per-page 100))
-  ;; TODO: implement
-  (error "Not implemented"))
+  (let ((default (default-page (client page))))
+    (cond ((not (eq page default)) ;; Wow! This sucks!
+           (edit (client page) :default-page page)
+           (unwind-protect (notifications (client page) :start start :end end :per-page per-page)
+             (edit (client page) :default-page default)))
+          (T
+           (notifications (client page) :start start :end end :per-page per-page)))))
 
 (defun encode-blocks (blocks)
   (loop for block in blocks
@@ -223,30 +228,35 @@
                       (T
                        block))))
 
+(defun ensure-content-blocks (content)
+  (loop for block in (if (listp content) content (list content))
+        collect (etypecase block
+                  (string block)
+                  (attachment block)
+                  (pathname (make-instance 'attachment :file block)))))
+
 (defmethod make-post ((page page) &key title content content-warnings tags adult-p draft-p share)
-  (let* ((blocks (loop for block in (if (listp content) (list content) content)
-                       collect (etypecase block
-                                 (string block)
-                                 (attachment block)
-                                 (pathname (make-instance 'attachment :file block)))))
+  (let* ((blocks (ensure-content-blocks content))
          (data (request (client page) :postjson (format NIL "/project/~a/posts" (handle page))
                                       :post-state 0
                                       :headline title
                                       :adult-content adult-p
                                       :blocks (encode-blocks blocks)
                                       :cws content-warnings
-                                      :tags tags))
+                                      :tags tags
+                                      :share-of-post-id (when share (id share))))
          (post (decode-entity 'post data :client (client page))))
     (loop for thing in blocks
-          when (typep content 'attachment)
+          when (typep thing 'attachment)
           do (upload thing post))
     (let ((data (request (client page) :put (format NIL "/project/~a/posts/~a" (handle page) (id post))
-                                       :post-state 1
+                                       :post-state (if draft-p 1 0)
                                        :headline title
                                        :adult-content adult-p
                                        :blocks (encode-blocks blocks)
                                        :cws content-warnings
-                                       :tags tags)))
+                                       :tags tags
+                                       :share-of-post-id (when share (id share)))))
       (decode-entity post data))))
 
 (defmethod ask ((page page) content &key (source (default-page (client page))))
@@ -255,9 +265,33 @@
            :content content
            :anon (not (null source))))
 
-(defmethod edit ((page page) &key display-name title description avatar header privacy bio pronouns flags info)
-  ;; TODO: implement
-  (error "Not implemented"))
+(defmethod edit ((page page) &key display-name title description url pronouns contact-card)
+  ;; FIXME: avatar and header changes. Somehow the chrome network tab shows no upload for it...?
+  (request (client page) :post "/versions"
+                         :display-name (or display-name (display-name page))
+                         :dek (or title (title page))
+                         :description (or description (description page))
+                         :url (or url (url page))
+                         :pronouns (or pronouns (pronouns page))
+                         :contact-card (com.inuoe.jzon:stringify (or contact-card (contact-card page))))
+  (when display-name (setf (display-name page) display-name))
+  (when title (setf (title page) title))
+  (when description (setf (description page) description))
+  (when url (setf (url page) url))
+  (when pronouns (setf (pronouns page) pronouns))
+  (when contact-card (setf (contact-card page) contact-card))
+  page)
+
+(defmethod find-post ((id integer) (page page))
+  (let ((response (request (client page) :get "/trpc/posts.singlePost"
+                                         :batch 1
+                                         :input (tab "0" id "1" (tab :handle (handle page) :post-id id)))))
+    (let ((data (getj response :result :data :post)))
+      (setf (gethash "comments" data) (getj response :result :comments (getj data :post-id)))
+      (decode-entity 'post data))))
+
+(defmethod find-post ((id string) (page page))
+  (find-post (parse-integer id) page))
 
 (define-entity post (cached-entity)
   (id :field "postId")
@@ -267,8 +301,8 @@
   (content-warnings :field "cws" :translate-with #'to-list)
   (adult-p :field "effectiveAdultContent")
   (liked-p :field "isLiked")
-  (shareable-p :field "canShare")
-  (publishable-p :field "canPublish")
+  (shareable-p :field "canShare" :translate-with #'from-bool)
+  (publishable-p :field "canPublish" :translate-with #'from-bool)
   (pinned-p :field "pinned")
   (comments-locked-p :field "commentsLocked")
   (shares-locked-p :field "sharesLocked")
@@ -279,7 +313,7 @@
   (url :field "singlePostPageUrl")
   (content :field "blocks" :translate-with #'decode-blocks)
   (text :field "plainTextBody")
-  (comments :field NIL))
+  (comments :to-cache 'comment))
 
 (defmethod print-object ((entity post) stream)
   (if (slot-boundp entity 'id)
@@ -295,21 +329,46 @@
   (make-post page :tags tags :content content :share post))
 
 (defmethod reply ((post post) text &key reply-to)
-  ;; TODO: implement
-  (error "Not implemented"))
+  (if reply-to
+      (request (client post) :postjson "/comments"
+                             :postid (id post)
+                             :body text
+                             :in-reply-to-comment-id (id reply-to))
+      (request (client post) :postjson "/comments"
+                             :postid (id post)
+                             :body text)))
 
-(defmethod edit ((post post) &key title content-warnings adult-p tags content)
-  ;; TODO: implement
-  (error "Not implemented"))
+(defmethod edit ((post post) &key title content-warnings (adult-p NIL adult-pp) (tags NIL tags-p) draft-p content (liked-p NIL liked-pp))
+  (when liked-pp
+    (request (client post) :postjson (if liked-p "/trpc/relationships.like" "/trpc/relationships.unlike")
+                           :from-project-id (id (client post)) 
+                           :to-post-id (id post))
+    (setf (liked-p post) liked-p))
+  (when (or title content-warnings adult-p tags content)
+    (let ((blocks (if content (ensure-content-blocks content) (content post))))
+      (loop for thing in blocks
+            when (typep thing 'attachment)
+            do (upload thing post))
+      (let ((data (request (client post) :put (format NIL "/project/~a/posts/~a" (handle (page post)) (id post))
+                                         :post-state (if draft-p 1 0)
+                                         :headline (or title (title post))
+                                         :adult-content (if adult-pp adult-p (adult-p post))
+                                         :blocks (encode-blocks blocks)
+                                         :cws (or content-warnings (content-warnings post))
+                                         :tags (if tags-p tags (tags post)))))
+        (decode-entity post data)))))
 
 (defmethod destroy ((post post))
-  ;; TODO: implement
-  (error "Not implemented"))
+  (request (client post) :postjson "/trpc/posts.delete"
+                         :project-handle (handle (page post)) 
+                         :post-id (id post))
+  (slot-makunbound post 'id)
+  post)
 
 (defmethod comments :before ((post post))
   (unless (slot-boundp post 'comments)
-    ;; TODO: implement
-    (error "Not implemented")))
+    ;; This will fetch the post through the single endpoint and refresh comments.
+    (find-post (id post) (page post))))
 
 (defmethod upload ((attachment attachment) (post post))
   (if (id attachment)
@@ -326,12 +385,17 @@
         attachment)))
 
 (define-entity comment (cached-entity)
-  post
-  (reply-to :from-cache 'comment)
-  (replies :from-cache 'comment)
-  (author :from-cache 'post)
-  (time :translate-with #'to-universal)
-  text)
+  (reply-to :field NIL)
+  (post :field ("comment" "postId"))
+  (replies :field ("comment" "children") :to-cache 'comment)
+  (time :field ("comment" "postedAtISO") :translate-with #'to-universal)
+  (text :field ("comment" "body"))
+  (deleted-p :field ("comment" "deleted"))
+  (hidden-p :field ("comment" "hidden"))
+  (author :field "poster" :to-cache 'post)
+  (interactable-p :field "canInteract" :translate-with #'from-bool)
+  (editable-p :field "canEdit" :translate-with #'from-bool)
+  (hideable-p :field "canHide" :translate-with #'from-bool))
 
 (defmethod print-object ((entity comment) stream)
   (if (slot-boundp entity 'id)
@@ -339,13 +403,30 @@
         (format stream "~a @~a" (handle (author entity)) (id entity)))
       (call-next-method)))
 
-(defmethod edit ((comment comment) &key text)
-  ;; TODO: implement
-  (error "Not implemented"))
+(defmethod decode-entity :after ((comment comment) data &rest args)
+  (declare (ignore args))
+  (loop for child in (replies comment)
+        do (setf (reply-to child) comment)))
+
+(defmethod edit ((comment comment) &key text (hidden-p NIL hidden-pp))
+  (when text
+    (request (client comment) :put (format NIL "/comments/~a" (id comment))
+                              :post-id (id (post comment))
+                              :body text)
+    (setf (text comment) text))
+  (when hidden-pp
+    (request (client comment) :postjson (format NIL "/trpc/comments.setHidden")
+                              :comment-id (id comment)
+                              :hidden hidden-p)
+    (setf (hidden-p comment) hidden-p))
+  comment)
 
 (defmethod destroy ((comment comment))
-  ;; TODO: implement
-  (error "Not implemented"))
+  (request (client comment) :delete (format NIL "/comments/~a" (id comment))
+                            :post-id (id (post comment))
+                            :body "")
+  (slot-makunbound comment 'id)
+  comment)
 
 (defmethod reply ((comment comment) text &key)
   (reply (post comment) text :reply-to comment))

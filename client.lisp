@@ -13,9 +13,7 @@
   ((cookie-jar :initform (make-instance 'drakma:cookie-jar) :accessor cookie-jar)))
 
 (defmethod shared-initialize :after ((client client) slots &key (token NIL token-p))
-  (when token-p
-    (setf (drakma:cookie-jar-cookies (cookie-jar client))
-          (if token-p (list (make-instance 'drakma:cookie :domain "cohost.org" :name "connect.sid" :value token)) ()))))
+  (when token-p (setf (token client) token)))
 
 (defmethod request ((client client) method endpoint &rest args)
   (when *debug*
@@ -74,11 +72,27 @@
 (defmethod login ((client client) email password)
   (let* ((salt (fixup-salt (getj (request client :get "/login/salt" :email email) :salt)))
          (result (request client :post "/login" :email email :client-hash (compute-hash password salt))))
-    (change-class client 'account :id (gethash "userId" result))))
+    (setf (token client) (token client))))
 
 (defmethod logout ((client client))
   (request client :post "/logout")
-  (change-class client 'client :token NIL))
+  (setf (token client) NIL))
 
 (defmethod token ((client client))
   (drakma:cookie-value (find "connect.sid" (drakma:cookie-jar-cookies (cookie-jar client)) :key #'drakma:cookie-name :test #'string=)))
+
+(defmethod (setf token) (value (client client))
+  (let ((cookie (find "connect.sid" (drakma:cookie-jar-cookies (cookie-jar client)) :key #'drakma:cookie-name :test #'string=)))
+    (cond ((null value)
+           (setf (drakma:cookie-jar-cookies (cookie-jar client)) ()))
+          (cookie
+           (setf (drakma:cookie-value cookie) value))
+          (T
+           (push (make-instance 'drakma:cookie :name "connect.sid" :value value :domain "cohost.org")
+                 (drakma:cookie-jar-cookies (cookie-jar client)))))
+    (if value
+        (unless (typep client 'account)
+          (change-class client 'account))
+        (when (typep client 'account)
+          (change-class client 'client)))
+    value))

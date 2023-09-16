@@ -74,6 +74,7 @@
              (setf (slot-value ,name ,value) (slot-value ,data ,value))))))))
 
 (define-entity account (client)
+  (id :field "userId")
   (%cache :field NIL)
   (pages :field NIL)
   email
@@ -85,11 +86,14 @@
   (two-factor-p :field "twoFactorActive"))
 
 (defmethod shared-initialize :after ((account account) slots &key)
+  (setf (client account) account)
   (unless (slot-boundp account '%cache)
     (setf (%cache account) (alexandria:plist-hash-table (list 'page (tab) 'post (tab) 'comment (tab))))))
 
+(defmethod make-instance :after ((account account) &key)
+  (decode-entity account (getj (request account :get "/trpc/login.loggedIn") :result :data)))
+
 (defmethod update-instance-for-different-class :after ((client client) (account account) &key)
-  (setf (client account) account)
   (decode-entity account (getj (request account :get "/trpc/login.loggedIn") :result :data)))
 
 (defmethod print-object ((entity account) stream)
@@ -100,6 +104,9 @@
 
 (defmethod cache ((account account) entity)
   (setf (gethash (id entity) (gethash (type-of entity) (%cache account))) entity))
+
+(defmethod login ((account account) email password)
+  (error "Already logged in!"))
 
 (defmethod find-cached ((account account) type id)
   (or (gethash id (gethash type (%cache account)))

@@ -6,6 +6,12 @@
 (defgeneric ask (page content &key source))
 (defgeneric share (post &key))
 (defgeneric reply (post text &key))
+(defgeneric notifications (account &key start end per-page))
+(defgeneric posts (page &key start end))
+(defgeneric ask (page content &key source))
+(defgeneric asks (page))
+(defgeneric find-post (id page))
+(defgeneric comments (post))
 
 (defclass entity ()
   ((id :initarg :id :accessor id)
@@ -259,12 +265,6 @@
                                        :share-of-post-id (when share (id share)))))
       (decode-entity post data))))
 
-(defmethod ask ((page page) content &key (source (default-page (client page))))
-  (request (client page) :postjson "/trpc/asks.send"
-           :to-project-handle (handle page)
-           :content content
-           :anon (not (null source))))
-
 (defmethod edit ((page page) &key display-name title description url pronouns contact-card)
   ;; FIXME: avatar and header changes. Somehow the chrome network tab shows no upload for it...?
   (request (client page) :post "/versions"
@@ -281,6 +281,16 @@
   (when pronouns (setf (pronouns page) pronouns))
   (when contact-card (setf (contact-card page) contact-card))
   page)
+
+(defmethod ask ((page page) content &key (source (default-page (client page))))
+  (request (client page) :postjson "/trpc/asks.send"
+                         :to-project-handle (handle page)
+                         :content content
+                         :anon (not (null source))))
+
+(defmethod asks ((page page))
+  ;; FIXME: implement
+  (error "Not implemented"))
 
 (defmethod find-post ((id integer) (page page))
   (let ((response (request (client page) :get "/trpc/posts.singlePost"

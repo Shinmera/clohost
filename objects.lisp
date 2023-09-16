@@ -109,8 +109,7 @@
   (error "Already logged in!"))
 
 (defmethod find-cached ((account account) type id)
-  (or (gethash id (gethash type (%cache account)))
-      id))
+  (gethash id (gethash type (%cache account))))
 
 (defmethod clear-cache ((account account))
   (loop for table being the hash-values of (%cache account)
@@ -135,6 +134,7 @@
 
 (defmethod default-page :before ((account account))
   (unless (typep (slot-value account 'default-page) 'page)
+    (pages account)
     (setf (default-page account) (find-cached account 'page (slot-value account 'default-page)))))
 
 (defmethod edit ((account account) &key default-page)
@@ -145,6 +145,9 @@
     (string
      (edit account :default-page (find default-page (pages account) :key #'handle :test #'string=)))
     (null)))
+
+(defmethod make-post ((account account) &rest args &key &allow-other-keys)
+  (apply #'make-post (default-page account) args))
 
 (defclass cached-entity (entity)
   ())
@@ -250,27 +253,30 @@
 
 (defmethod make-post ((page page) &key title content content-warnings tags adult-p draft-p share)
   (let* ((blocks (ensure-content-blocks content))
+         (content-warnings (map 'vector #'identity content-warnings))
+         (tags (map 'vector #'identity tags))
+         (share (if share (id share) :||))
          (data (request (client page) :postjson (format NIL "/project/~a/posts" (handle page))
                                       :post-state 0
-                                      :headline title
+                                      :headline (or title "")
                                       :adult-content adult-p
                                       :blocks (encode-blocks blocks)
                                       :cws content-warnings
                                       :tags tags
-                                      :share-of-post-id (when share (id share))))
+                                      :share-of-post-id share))
          (post (decode-entity 'post data :client (client page))))
     (loop for thing in blocks
           when (typep thing 'attachment)
           do (upload thing post))
     (let ((data (request (client page) :put (format NIL "/project/~a/posts/~a" (handle page) (id post))
-                                       :post-state (if draft-p 1 0)
-                                       :headline title
+                                       :post-state (if draft-p 0 1)
+                                       :headline (or title "")
                                        :adult-content adult-p
                                        :blocks (encode-blocks blocks)
                                        :cws content-warnings
                                        :tags tags
-                                       :share-of-post-id (when share (id share)))))
-      (decode-entity post data))))
+                                       :share-of-post-id share)))
+      (find-post (id (decode-entity post data :page page)) page))))
 
 (defmethod edit ((page page) &key display-name title description url pronouns contact-card)
   ;; FIXME: avatar and header changes. Somehow the chrome network tab shows no upload for it...?
@@ -302,7 +308,7 @@
 (defmethod find-post ((id integer) (page page))
   (let ((response (request (client page) :get "/trpc/posts.singlePost"
                                          :batch 1
-                                         :input (tab "0" id "1" (tab :handle (handle page) :post-id id)))))
+                                         :input (tab "0" (tab :handle (handle page) :post-id id)))))
     (let ((data (getj response :result :data :post)))
       (setf (gethash "comments" data) (getj response :result :comments (getj data :post-id)))
       (decode-entity 'post data))))
@@ -355,7 +361,7 @@
                              :postid (id post)
                              :body text)))
 
-(defmethod edit ((post post) &key title content-warnings (adult-p NIL adult-pp) (tags NIL tags-p) draft-p content (liked-p NIL liked-pp))
+(defmethod edit ((post post) &key title (content-warnings NIL content-warnings-p) (adult-p NIL adult-pp) (tags NIL tags-p) draft-p content (liked-p NIL liked-pp))
   (when liked-pp
     (request (client post) :postjson (if liked-p "/trpc/relationships.like" "/trpc/relationships.unlike")
                            :from-project-id (id (client post)) 
@@ -367,12 +373,12 @@
             when (typep thing 'attachment)
             do (upload thing post))
       (let ((data (request (client post) :put (format NIL "/project/~a/posts/~a" (handle (page post)) (id post))
-                                         :post-state (if draft-p 1 0)
-                                         :headline (or title (title post))
+                                         :post-state (if draft-p 0 1)
+                                         :headline (or title (title post) "")
                                          :adult-content (if adult-pp adult-p (adult-p post))
                                          :blocks (encode-blocks blocks)
-                                         :cws (or content-warnings (content-warnings post))
-                                         :tags (if tags-p tags (tags post)))))
+                                         :cws (map 'vector #'identity (if content-warnings-p content-warnings (content-warnings post)))
+                                         :tags (map 'vector #'identity (if tags-p tags (tags post))))))
         (decode-entity post data)))))
 
 (defmethod destroy ((post post))

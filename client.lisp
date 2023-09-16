@@ -26,6 +26,7 @@
                            :parameters (case method
                                          ((:get :post)
                                           (loop for (k v) on args by #'cddr
+                                                unless (eql v :||)
                                                 collect (cons (to-key k)
                                                               (etypecase v
                                                                 (string v)
@@ -38,6 +39,7 @@
                                        (com.inuoe.jzon:stringify
                                         (loop with table = (make-hash-table :test 'equal)
                                               for (k v) on args by #'cddr
+                                              unless (eql v :||)
                                               do (setf (gethash (to-key k) table) v)
                                               finally (return table)))))
                            :content-type (ecase method
@@ -72,7 +74,8 @@
 (defmethod login ((client client) email password)
   (let* ((salt (fixup-salt (getj (request client :get "/login/salt" :email email) :salt)))
          (result (request client :post "/login" :email email :client-hash (compute-hash password salt))))
-    (setf (token client) (token client))))
+    (setf (token client) (token client))
+    client))
 
 (defmethod logout ((client client))
   (request client :post "/logout")

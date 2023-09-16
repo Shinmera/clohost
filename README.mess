@@ -1,2 +1,16 @@
 # About Clohost
-This is a client implementation for the "Cohost"(https://cohost.org) API.
+This is a client implementation for the "Cohost"(https://cohost.org) API. The API is not currently officially documented, so the work in this library was done via observation of how the existing site interacts with its API. It may break if changes are made by ASSC.
+
+## How To
+Create a ``client`` instance and ``log in``. If successful, your ``client`` will turn into an ``account`` and you'll be able to start making changes and querying for data. Please see the documentation for the ``account`` objects and other ``entity``s in the API.
+
+For something simple, you can make a new post with
+
+:: common lisp
+(make-post (default-page *)
+  :tags '("cohost api")
+  :content "Posting with https://github.com/shinmera/clohost,
+Hello @Shinmera!")
+::
+
+You can also ``edit`` it, ``reply`` to it, or ``destroy`` the post again. Again, please see the definition cross references for more information on what you can do.

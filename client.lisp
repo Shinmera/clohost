@@ -67,8 +67,8 @@
   (login (make-instance 'client) email password))
 
 (defmethod login ((client client) email password)
-  (let* ((salt (fixup-salt (getj (request client :get "/login/salt" :email email) :salt)))
-         (result (request client :post "/login" :email email :client-hash (compute-hash password salt))))
+  (let* ((salt (fixup-salt (getj (request client :get "/trpc/login.getSalt" :input (tab :email email)) :result :data :salt)))
+         (result (getj (request client :postjson "/trpc/login.login" :email email :client-hash (compute-hash password salt)) :result :data)))
     (setf (token client) (token client))
     client))
 

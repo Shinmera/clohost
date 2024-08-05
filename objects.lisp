@@ -151,6 +151,9 @@
 (defmethod make-post ((account account) &rest args &key &allow-other-keys)
   (apply #'make-post (default-page account) args))
 
+(defmethod posts ((account account) &rest args &key &allow-other-keys)
+  (apply #'posts (default-page account) args))
+
 (defclass cached-entity (entity)
   ())
 
